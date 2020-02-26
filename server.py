@@ -1,65 +1,47 @@
+#!/usr/bin/env python
 
-# import socket programming library
-import socket
+import socket, threading
 
-# import thread module
-from _thread import *
-import threading
+class ClientThread(threading.Thread):
 
-print_lock = threading.Lock()
+    def __init__(self,ip,port,clientsocket):
+        threading.Thread.__init__(self)
+        self.ip = ip
+        self.port = port
+        self.csocket = clientsocket
+        print ( "[+] New thread started for "+ip+":"+str(port))
 
-# thread function
-def threaded(c):
-    while True:
+    def run(self):
+        print ( "Connection from : "+ip+":"+str(port))
+        stri = "Welcome to the server"
+        send = stri.encode('ascii')
+        self.csocket.send(send)
 
-        # data received from client
-        data = c.recv(1024)
-        if not data:
-            print('Bye')
+        data = "dummydata"
 
-            # lock released on exit
-            print_lock.release()
-            break
+        while len(data):
+            data = self.csocket.recv(2048)
+            #encode to ascii data received
+            dataSTR = data.decode('ascii')
+            print(dataSTR)
+            print ("Client(", self.ip," :", str(self.port),") sent : ", dataSTR)
+            self.csocket.send(data)
 
-        # reverse the given string from client
-        data = data[::]
-        print(data)
-        # send back reversed string to client
-        c.send(data)
+        print ( "Client at "+self.ip+" disconnected...")
 
-    # connection closed
-    c.close()
+host = "127.0.0.1"
+port = 9999
 
+tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+tcpsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-def Main():
-    host = ""
+tcpsock.bind((host,port))
 
-    # reverse a port on your computer
-    # in our case it is 12345 but it
-    # can be anything
-    port = 12345
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((host, port))
-    print("socket binded to port", port)
+while True:
+    tcpsock.listen(4)
+    print ("Listening for incoming connections...")
+    (clientsock, (ip, port)) = tcpsock.accept()
 
-    # put the socket into listening mode
-    s.listen(5)
-    print("socket is listening")
-
-    # a forever loop until client wants to exit
-    while True:
-
-        # establish connection with client
-        c, addr = s.accept()
-
-        # lock acquired by client
-        print_lock.acquire()
-        print('Connected to :', addr[0], ':', addr[1])
-
-        # Start a new thread and return its identifier
-        start_new_thread(threaded, (c,))
-    s.close()
-
-
-if __name__ == '__main__':
-    Main()
+    #pass clientsock to the ClientThread thread object being created
+    newthread = ClientThread(ip, port, clientsock)
+    newthread.start()
