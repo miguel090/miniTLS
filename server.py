@@ -21,10 +21,11 @@ class ClientThread(threading.Thread):
 
         while len(data):
             data = self.csocket.recv(2048)
+            print(data)
             #encode to ascii data received
-            dataSTR = data.decode('ascii')
-            print(dataSTR)
-            print ("Client(", self.ip," :", str(self.port),") sent : ", dataSTR)
+            #dataSTR = data.decode('ascii')
+            #print(dataSTR)
+            #print ("Client(", self.ip," :", str(self.port),") sent : ", dataSTR)
             self.csocket.send(data)
 
         print ( "Client at "+self.ip+" disconnected...")
