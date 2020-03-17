@@ -29,48 +29,31 @@ class ClientThread(threading.Thread):
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
         print("[+] New thread started for " + ip + ":" + str(port))
+    
+    def encData(self, message):
+        return self.enc.encrypt(message)
 
-    def run(self):
-        print("Connection from " + self.ip + ":" + str(self.port))
 
-        print("Session key for " + self.ip + ":" +
-              str(self.port) + ": " + str(self.sessionKey))
-        self.csocket.send(self.sessionKey)
+    def decData(self, ciphertext):
+        return self.dec.decrypt(ciphertext)
 
-        stri = "Welcome to the server"
-        send = stri.encode('ascii')
-        self.csocket.send(send)
 
-        data = "dummydata"
+    def make_auth(self, mac, ciphertext):
+        self.ehmac.update(ciphertext)
+        return self.ehmac.digest()
 
-        while len(data):
-            data = self.csocket.recv(2048)
-            print("Received the following data: " + str(data))
-            if data == b'':
-                break
-            try:
-                ciphertext, nonce, mac = self.parse_json(data)
-                # Decode the json received
-                message = self.dec.decrypt(ciphertext)
-            except ValueError | KeyError as e:
-                print('Error in decryption')
 
-            # Validate mac
-            self.dhmac.update(message)
-            try:
-                # need to transform from hexadecimal bytes to hexadecimal string
-                self.dhmac.hexverify(mac.hex())
-                print('MAC is good')
-            except ValueError as e:
-                print('Error in MAC')
+    def verify_auth(self, ciphertext, mac):
+        self.dhmac.update(ciphertext)
+        try:
+            # need to transform from hexadecimal bytes to hexadecimal string
+            self.dhmac.hexverify(mac.hex())
+            print('MAC is good.')
+        except ValueError as e:
+            print('MAC with error.')
+            return 1
 
-            # Print the received message
-            print('Received from the client: ' +
-                  str(message.decode(self.charset)) + '\n')
-
-            self.csocket.send(data)
-
-        print("Client at " + self.ip + " disconnected...")
+        return 0
 
     def make_json(self, ciphertext_bytes, nonce, mac):
         # b64 encode becuz of weird characters
@@ -88,6 +71,46 @@ class ClientThread(threading.Thread):
         mac = b64decode(rcv_json['mac'])
 
         return ciphertext, nonce, mac
+
+    def run(self):
+        print("Connection from " + self.ip + ":" + str(self.port))
+
+        print("Session key for " + self.ip + ":" +
+              str(self.port) + ": " + str(self.sessionKey))
+        self.csocket.send(self.sessionKey)
+
+        stri = "Welcome to the server"
+        send = stri.encode('ascii')
+        self.csocket.send(send)
+
+        data = "dummydata"
+
+        while len(data):
+            data = self.csocket.recv(2048)
+            print("Received the following data: " + str(data))
+            
+            if data == b'':
+                break
+
+            try:
+                ciphertext, nonce, mac = self.parse_json(data)
+                # Decode the json received
+                message = self.decData(ciphertext)
+            except ValueError | KeyError as e:
+                print('Error in decryption')
+
+            # Validate mac
+            if self.verify_auth(message, mac) != 0:
+                print("Security error. Closing connection")
+                break
+
+            # Print the received message
+            print('Received from the client: ' +
+                  str(message.decode(self.charset)) + '\n')
+
+            self.csocket.send(data)
+
+        print("Client at " + self.ip + " disconnected...")
 
 
 host = "127.0.0.1"

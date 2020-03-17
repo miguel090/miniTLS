@@ -3,42 +3,37 @@
 import socket
 import json
 from base64 import b64encode, b64decode
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES, ARC4
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import HMAC, SHA256
 
 charset = 'utf-8'
 
 
-def encData(message, enc_key):
-    # create AES object and encrypt
-    AESenc = AES.new(enc_key, AES.MODE_CTR)
-    ciphertext = AESenc.encrypt(message)
-
-    return ciphertext, AESenc.nonce
+def encData(cipher, message):
+    return cipher.encrypt(message)
 
 
-def decData(ciphertext, nonce, enc_key):
-    AESdec = AES.new(enc_key, AES.MODE_CTR, nonce=nonce)
-    return AESdec.decrypt(ciphertext)
+def decData(cipher, ciphertext):
+    return cipher.decrypt(ciphertext)
 
 
-def make_auth(ciphertext, auth_key):
-    h = HMAC.new(auth_key, digestmod=SHA256)
-    h.update(ciphertext)
-    return h.digest()
+def make_auth(hmac, ciphertext):
+    hmac.update(ciphertext)
+    return hmac.digest()
 
 
-def verify_auth(mac, msg, auth_key):
-    h = HMAC.new(auth_key, digestmod=SHA256)
-    h.update(msg)
+def verify_auth(hmac, ciphertext, mac):
+    hmac.update(ciphertext)
     try:
         # need to transform from hexadecimal bytes to hexadecimal string
-        h.hexverify(mac.hex())
-        print('mac is good')
+        hmac.hexverify(mac.hex())
+        print('MAC is good.')
     except ValueError as e:
-        print('major error')
-    return
+        print('MAC with error.')
+        return 1
+
+    return 0
 
 
 def make_json(ciphertext_bytes, nonce, mac):
@@ -76,13 +71,13 @@ def Main():
     enc_key = SHA256.new(data=sessionKey + b'1').digest()
     auth_key = SHA256.new(data=sessionKey + b'2').digest()
 
-    enc = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
-    dec = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
+    encCipher = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
+    decCipher = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
     ehmac = HMAC.new(auth_key, digestmod=SHA256)
     dhmac = HMAC.new(auth_key, digestmod=SHA256)
 
     message = s.recv(2048)
-    print('Received the following message: ' + str(message) + '\n')
+    print('Received the following greeting message: ' + str(message) + '\n')
 
     while True:
         try:
@@ -98,12 +93,12 @@ def Main():
             break
 
         message = message.encode(charset)
-        ciphertext = enc.encrypt(message)
+        ciphertext = encData(encCipher, message)
 
-        mac = ehmac.update(message).digest()
+        mac = make_auth(ehmac, message)
 
         # Create json file
-        result = make_json(ciphertext, enc.nonce, mac)
+        result = make_json(ciphertext, encCipher.nonce, mac)
 
         # Message sent to server
         s.send(result.encode(charset))
@@ -113,18 +108,14 @@ def Main():
         try:
             ciphertext, nonce, mac = parse_json(data_rcv)
             # Decode the json received
-            message = dec.decrypt(ciphertext)
+            message = decData(decCipher, ciphertext)
         except ValueError | KeyError as e:
             print('Error in decryption')
 
         # Validate mac
-        dhmac.update(message)
-        try:
-            # need to transform from hexadecimal bytes to hexadecimal string
-            dhmac.hexverify(mac.hex())
-            print('MAC is good')
-        except ValueError as e:
-            print('Error in MAC')
+        if verify_auth(dhmac, message, mac) != 0:
+            print("Security error. Closing connection")
+            break
 
         # Print the received message
         print('Received from the server: ' +
