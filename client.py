@@ -9,25 +9,41 @@ from Crypto.Hash import HMAC, SHA256
 
 charset = 'utf-8'
 
+class Client:
+    def __init__(self, sessionKey, nonce):
+        self.nonce = nonce
+        self.enc_key = SHA256.new(data=sessionKey + b'1').digest()
+        self.auth_key = SHA256.new(data=sessionKey + b'2').digest()
 
-def encData(cipher, message):
-    return cipher.encrypt(message)
+        self.encCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce = nonce)
+        self.decCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce = nonce)
+        self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
+        self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
+
+        self.nrseq = 0
+
+def encData(client, message):
+    return client.encCipher.encrypt(message)
 
 
-def decData(cipher, ciphertext):
-    return cipher.decrypt(ciphertext)
+def decData(client, ciphertext):
+    return client.decCipher.decrypt(ciphertext)
 
 
-def make_auth(hmac, ciphertext):
-    hmac.update(ciphertext)
-    return hmac.digest()
+def make_auth(client, ciphertext):
+    #add sequence number to ciphertext
+    ciphertext = ciphertext + bytes(client.nrseq)
+    client.ehmac.update(ciphertext)
+    return client.ehmac.digest()
 
 
-def verify_auth(hmac, ciphertext, mac):
-    hmac.update(ciphertext)
+def verify_auth(client, ciphertext, mac):
+    #add sequence number to ciphertext
+    ciphertext = ciphertext + bytes(client.nrseq)
+    client.dhmac.update(ciphertext)
     try:
         # need to transform from hexadecimal bytes to hexadecimal string
-        hmac.hexverify(mac.hex())
+        client.dhmac.hexverify(mac.hex())
         print('MAC is good.')
     except ValueError as e:
         print('MAC with error.')
@@ -36,10 +52,10 @@ def verify_auth(hmac, ciphertext, mac):
     return 0
 
 
-def make_json(ciphertext_bytes, nonce, mac):
+def make_json(client, ciphertext_bytes, mac):
     # b64 encode becuz of weird characters
     ciphertext = b64encode(ciphertext_bytes).decode(charset)
-    nonce = b64encode(nonce).decode(charset)
+    nonce = b64encode(client.nonce).decode(charset)
     mac = b64encode(mac).decode(charset)
 
     return json.dumps({'nonce': nonce, 'ciphertext': ciphertext, 'mac': mac})
@@ -67,15 +83,8 @@ def Main():
     s.connect((host, port))
     sessionKey = s.recv(32)
     print('Received the following session key: ' + str(sessionKey) + '\n')
-
-    enc_key = SHA256.new(data=sessionKey + b'1').digest()
-    auth_key = SHA256.new(data=sessionKey + b'2').digest()
-
-    encCipher = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
-    decCipher = AES.new(enc_key, AES.MODE_CTR, nonce=b'1234')
-    ehmac = HMAC.new(auth_key, digestmod=SHA256)
-    dhmac = HMAC.new(auth_key, digestmod=SHA256)
-
+    nonce=b'1234'
+    client = Client(sessionKey, nonce)
     message = s.recv(2048)
     print('Received the following greeting message: ' + str(message) + '\n')
 
@@ -93,12 +102,12 @@ def Main():
             break
 
         message = message.encode(charset)
-        ciphertext = encData(encCipher, message)
+        ciphertext = encData(client, message)
 
-        mac = make_auth(ehmac, message)
+        mac = make_auth(client, message)
 
         # Create json file
-        result = make_json(ciphertext, encCipher.nonce, mac)
+        result = make_json(client, ciphertext, mac)
 
         # Message sent to server
         s.send(result.encode(charset))
@@ -106,20 +115,21 @@ def Main():
         # Message received from server
         data_rcv = s.recv(2048)
         try:
-            ciphertext, nonce, mac = parse_json(data_rcv)
+            ciphertext, client.nonce, mac = parse_json(data_rcv)
             # Decode the json received
-            message = decData(decCipher, ciphertext)
+            message = decData(client, ciphertext)
         except ValueError | KeyError as e:
             print('Error in decryption')
 
         # Validate mac
-        if verify_auth(dhmac, message, mac) != 0:
+        if verify_auth(client, message, mac) != 0:
             print("Security error. Closing connection")
             break
 
         # Print the received message
         print('Received from the server: ' +
               str(message.decode(charset)) + '\n')
+        client.nrseq = client.nrseq + 1
 
     # Close the connection
     s.close()

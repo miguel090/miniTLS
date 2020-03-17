@@ -18,6 +18,7 @@ class ClientThread(threading.Thread):
         self.csocket = clientsocket
         self.charset = 'utf-8'
         self.nonce = b'1234'
+        self.nrseq = 0
 
         self.sessionKey = get_random_bytes(32)
         self.enc_key = SHA256.new(data=self.sessionKey + b'1').digest()
@@ -29,7 +30,7 @@ class ClientThread(threading.Thread):
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
         print("[+] New thread started for " + ip + ":" + str(port))
-    
+
     def encData(self, message):
         return self.enc.encrypt(message)
 
@@ -44,6 +45,8 @@ class ClientThread(threading.Thread):
 
 
     def verify_auth(self, ciphertext, mac):
+        #add sequence number to ciphertext
+        ciphertext = ciphertext + bytes(self.nrseq)
         self.dhmac.update(ciphertext)
         try:
             # need to transform from hexadecimal bytes to hexadecimal string
@@ -88,7 +91,7 @@ class ClientThread(threading.Thread):
         while len(data):
             data = self.csocket.recv(2048)
             print("Received the following data: " + str(data))
-            
+
             if data == b'':
                 break
 
@@ -109,6 +112,7 @@ class ClientThread(threading.Thread):
                   str(message.decode(self.charset)) + '\n')
 
             self.csocket.send(data)
+            self.nrseq = self.nrseq + 1
 
         print("Client at " + self.ip + " disconnected...")
 
