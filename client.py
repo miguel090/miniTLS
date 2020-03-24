@@ -7,20 +7,51 @@ from Crypto.Cipher import AES, ARC4
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import HMAC, SHA256
 
+
 charset = 'utf-8'
 
 class Client:
-    def __init__(self, sessionKey, nonce):
-        self.nonce = nonce
-        self.enc_key = SHA256.new(data=sessionKey + b'1').digest()
-        self.auth_key = SHA256.new(data=sessionKey + b'2').digest()
+    def __init__(self):
+        self.nonce = b'1234'
+        self.sessionKey = 0
+        self.enc_key = 0
+        self.auth_key = 0
 
-        self.encCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce = nonce)
-        self.decCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce = nonce)
-        self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
-        self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
+        self.client_secret =15
+        self.shared_prime = 23
+        self.shared_base=5
+        self.client_public_key= pow(self.shared_base, self.client_secret, self.shared_prime)
+
+        self.encCipher = 0
+        self.decCipher = 0
+        self.ehmac = 0
+        self.dhmac = 0
 
         self.nrseq = 0
+
+def estabilish_session_key(s, client):
+    print("client_public_key: " + str(bytes([client.client_public_key])))
+    s.send(bytes([client.client_public_key]))
+
+    server_public_key = s.recv(100)
+    print("server_public_key: " + str(server_public_key))
+    server_public_key = int.from_bytes(server_public_key, byteorder='big')
+
+    client.sessionKey = pow(server_public_key, client.client_secret, client.shared_prime)
+    print(client.sessionKey)
+    client.sessionKey= bytes([client.sessionKey])
+
+    set_keys(client)
+
+
+def set_keys(client):
+    client.enc_key = SHA256.new(data=client.sessionKey + b'1').digest()
+    client.auth_key = SHA256.new(data=client.sessionKey + b'2').digest()
+
+    client.encCipher = AES.new(client.enc_key, AES.MODE_CTR, nonce=client.nonce)
+    client.decCipher = AES.new(client.enc_key, AES.MODE_CTR, nonce=client.nonce)
+    client.ehmac = HMAC.new(client.auth_key, digestmod=SHA256)
+    client.dhmac = HMAC.new(client.auth_key, digestmod=SHA256)
 
 def encData(client, message):
     return client.encCipher.encrypt(message)
@@ -81,10 +112,10 @@ def Main():
 
     # Connect to server on local computer
     s.connect((host, port))
-    sessionKey = s.recv(32)
-    print('Received the following session key: ' + str(sessionKey) + '\n')
-    nonce=b'1234'
-    client = Client(sessionKey, nonce)
+
+    client = Client()
+    estabilish_session_key(s, client)
+    print('Received the following session key: ' + str(client.sessionKey) + '\n')
     message = s.recv(2048)
     print('Received the following greeting message: ' + str(message) + '\n')
 

@@ -20,7 +20,33 @@ class ClientThread(threading.Thread):
         self.nonce = b'1234'
         self.nrseq = 0
 
-        self.sessionKey = get_random_bytes(32)
+        self.server_secret =6
+        self.shared_prime = 23
+        self.shared_base=5
+        self.server_public_key= pow(self.shared_base, self.server_secret, self.shared_prime)
+
+        self.sessionKey = 0
+        self.enc_key = 0
+        self.auth_key = 0
+
+        self.enc = 0
+        self.dec = 0
+        self.ehmac = 0
+        self.dhmac = 0
+
+        print("[+] New thread started for " + ip + ":" + str(port))
+
+    def estabilish_session_key(self):
+        print('server_public_key: ' + str(self.server_public_key))
+        client_public_key=int.from_bytes(self.csocket.recv(100), byteorder='big')
+        print('client_public_key: ' + str(client_public_key))
+        self.csocket.send(bytes([self.server_public_key]))
+        self.sessionKey= pow(client_public_key, self.server_secret, self.shared_prime)
+        print(self.sessionKey)
+        self.sessionKey=bytes([self.sessionKey])
+        self.set_keys()
+
+    def set_keys(self):
         self.enc_key = SHA256.new(data=self.sessionKey + b'1').digest()
         self.auth_key = SHA256.new(data=self.sessionKey + b'2').digest()
 
@@ -28,8 +54,6 @@ class ClientThread(threading.Thread):
         self.dec = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
         self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
-
-        print("[+] New thread started for " + ip + ":" + str(port))
 
     def encData(self, message):
         return self.enc.encrypt(message)
@@ -77,10 +101,9 @@ class ClientThread(threading.Thread):
 
     def run(self):
         print("Connection from " + self.ip + ":" + str(self.port))
-
+        self.estabilish_session_key()
         print("Session key for " + self.ip + ":" +
               str(self.port) + ": " + str(self.sessionKey))
-        self.csocket.send(self.sessionKey)
 
         stri = "Welcome to the server"
         send = stri.encode('ascii')
