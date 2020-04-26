@@ -222,6 +222,8 @@ class ClientThread(threading.Thread):
 
 
 def create_asymetric_key_files():
+    #remove existing files
+    system("rm *_*")
     key = ECC.generate(curve='P-256')
 
     f = open('server_private_key.pem', 'wt')
