@@ -4,13 +4,17 @@ import socket
 import threading
 import json
 from base64 import b64encode, b64decode
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES, ARC4
+from Crypto.Util.Padding import pad, unpad
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import HMAC, SHA256
 
-KEY = b'abcdef'
-NONCE = b'1234'
+KEY = b'0123456789'
+NONCE = b'abcdef'
+IV = b'0123456789abcdef'
 CHARSET = 'utf-8'
+CIPHER = "AES-CTR-NoPadding"
+# Ciphers: AES-CTR-NoPadding, RC4, AES-CBC-NoPadding, AES-CBC-PKCS5Padding, AES-CFB8-NoPadding, AES-CFB8-PKCS5Padding, AES-CFB-NoPadding
 
 
 class ClientThread(threading.Thread):
@@ -26,16 +30,48 @@ class ClientThread(threading.Thread):
 
         self.enc_key = SHA256.new(data=KEY).digest()
 
-        self.enc = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
-        self.dec = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
+        if(CIPHER == "AES-CTR-NoPadding"):
+            self.enc = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
+            self.dec = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
+
+        elif(CIPHER == "RC4"):
+            self.enc = ARC4.new(self.enc_key, nonce=self.nonce)
+            self.dec = ARC4.new(self.enc_key, nonce=self.nonce)
+
+        elif(CIPHER == "AES-CBC-NoPadding" or CIPHER == "AES-CBC-PKCS5Padding"):
+            self.enc = AES.new(self.enc_key, AES.MODE_CBC, iv=IV)
+            self.dec = AES.new(self.enc_key, AES.MODE_CBC, iv=IV)
+
+        elif(CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            self.enc = AES.new(self.enc_key, AES.MODE_CFB,
+                               iv=IV, segment_size=8)
+            self.dec = AES.new(self.enc_key, AES.MODE_CFB,
+                               iv=IV, segment_size=8)
+
+        # PyCryptoDome não permite segment_size = 1 para CFB-1
+        elif(CIPHER == "AES-CFB-NoPadding"):
+            self.enc = AES.new(self.enc_key, AES.MODE_CFB,
+                               iv=IV, segment_size=8)
+            self.dec = AES.new(self.enc_key, AES.MODE_CFB,
+                               iv=IV, segment_size=8)
 
         print("[+] New thread started for " + ip + ":" + str(port))
 
     def encData(self, message):
-        return self.enc.encrypt(message)
+        if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+            return self.enc.encrypt(message)
+        elif(CIPHER == "AES-CBC-NoPadding"):
+            return self.enc.encrypt(pad(message, 16))
+        elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            return self.enc.encrypt(pad(message, 16))
 
     def decData(self, ciphertext):
-        return self.dec.decrypt(ciphertext)
+        if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+            return self.dec.decrypt(ciphertext)
+        elif(CIPHER == "AES-CBC-NoPadding"):
+            return unpad(self.dec.decrypt(ciphertext), 16)
+        elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            return unpad(self.dec.decrypt(ciphertext), 16)
 
     def make_json(self, ciphertext_bytes, nonce):
         # b64 encode becuz of weird characters

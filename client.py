@@ -4,12 +4,16 @@ import socket
 import json
 from base64 import b64encode, b64decode
 from Crypto.Cipher import AES, ARC4
+from Crypto.Util.Padding import pad, unpad
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import HMAC, SHA256
 
-KEY = b'abcdef'
-NONCE = b'1234'
+KEY = b'0123456789'
+NONCE = b'abcdef'
+IV = b'0123456789abcdef'
 CHARSET = 'utf-8'
+CIPHER = "AES-CTR-NoPadding"
+# Ciphers: AES-CTR-NoPadding, RC4, AES-CBC-NoPadding, AES-CBC-PKCS5Padding, AES-CFB8-NoPadding, AES-CFB8-PKCS5Padding, AES-CFB-NoPadding
 
 
 class Client:
@@ -17,18 +21,54 @@ class Client:
         self.nonce = nonce
         self.enc_key = SHA256.new(data=KEY).digest()
 
-        self.encCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce=nonce)
-        self.decCipher = AES.new(self.enc_key, AES.MODE_CTR, nonce=nonce)
+        if(CIPHER == "AES-CTR-NoPadding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CTR, nonce=self.nonce)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CTR, nonce=self.nonce)
+
+        elif(CIPHER == "RC4"):
+            self.encCipher = ARC4.new(self.enc_key, nonce=self.nonce)
+            self.decCipher = ARC4.new(self.enc_key, nonce=self.nonce)
+
+        elif(CIPHER == "AES-CBC-NoPadding" or CIPHER == "AES-CBC-PKCS5Padding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CBC, iv=IV)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CBC, iv=IV)
+
+        elif(CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=IV, segment_size=8)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=IV, segment_size=8)
+
+        # PyCryptoDome não permite segment_size = 1 para CFB-1
+        elif(CIPHER == "AES-CFB-NoPadding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=IV, segment_size=8)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=IV, segment_size=8)
 
         self.nrseq = 0
 
 
 def encData(client, message):
-    return client.encCipher.encrypt(message)
+    if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+        return client.encCipher.encrypt(message)
+    elif(CIPHER == "AES-CBC-NoPadding"):
+        return client.encCipher.encrypt(pad(message, 16))
+    elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+        return client.encCipher.encrypt(pad(message, 16))
 
 
 def decData(client, ciphertext):
-    return client.decCipher.decrypt(ciphertext)
+    if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+        return client.decCipher.decrypt(ciphertext)
+    elif(CIPHER == "AES-CBC-NoPadding"):
+        return unpad(client.decCipher.decrypt(ciphertext), 16)
+    elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+        return unpad(client.decCipher.decrypt(ciphertext), 16)
 
 
 def make_json(client, ciphertext_bytes):
