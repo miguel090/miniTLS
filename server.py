@@ -8,6 +8,10 @@ from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from Crypto.Hash import HMAC, SHA256
 
+KEY = b'abcdef'
+NONCE = b'1234'
+CHARSET = 'utf-8'
+
 
 class ClientThread(threading.Thread):
 
@@ -16,71 +20,40 @@ class ClientThread(threading.Thread):
         self.ip = ip
         self.port = port
         self.csocket = clientsocket
-        self.charset = 'utf-8'
-        self.nonce = b'1234'
+        self.charset = CHARSET
+        self.nonce = NONCE
         self.nrseq = 0
 
-        self.sessionKey = get_random_bytes(32)
-        self.enc_key = SHA256.new(data=self.sessionKey + b'1').digest()
-        self.auth_key = SHA256.new(data=self.sessionKey + b'2').digest()
+        self.enc_key = SHA256.new(data=KEY).digest()
 
         self.enc = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
         self.dec = AES.new(self.enc_key, AES.MODE_CTR, nonce=self.nonce)
-        self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
-        self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
         print("[+] New thread started for " + ip + ":" + str(port))
 
     def encData(self, message):
         return self.enc.encrypt(message)
 
-
     def decData(self, ciphertext):
         return self.dec.decrypt(ciphertext)
 
-
-    def make_auth(self, mac, ciphertext):
-        self.ehmac.update(ciphertext)
-        return self.ehmac.digest()
-
-
-    def verify_auth(self, ciphertext, mac):
-        #add sequence number to ciphertext
-        ciphertext = ciphertext + bytes(self.nrseq)
-        self.dhmac.update(ciphertext)
-        try:
-            # need to transform from hexadecimal bytes to hexadecimal string
-            self.dhmac.hexverify(mac.hex())
-            print('MAC is good.')
-        except ValueError as e:
-            print('MAC with error.')
-            return 1
-
-        return 0
-
-    def make_json(self, ciphertext_bytes, nonce, mac):
+    def make_json(self, ciphertext_bytes, nonce):
         # b64 encode becuz of weird characters
         ciphertext = b64encode(ciphertext_bytes).decode(self.charset)
         nonce = b64encode(nonce).decode(self.charset)
-        mac = b64encode(mac).decode(self.charset)
 
-        return json.dumps({'nonce': nonce, 'ciphertext': ciphertext, 'mac': mac})
+        return json.dumps({'nonce': nonce, 'ciphertext': ciphertext})
 
     def parse_json(self, data_rcv):
         rcv_json = json.loads(data_rcv)
 
         ciphertext = b64decode(rcv_json['ciphertext'])
         nonce = b64decode(rcv_json['nonce'])
-        mac = b64decode(rcv_json['mac'])
 
-        return ciphertext, nonce, mac
+        return ciphertext, nonce
 
     def run(self):
         print("Connection from " + self.ip + ":" + str(self.port))
-
-        print("Session key for " + self.ip + ":" +
-              str(self.port) + ": " + str(self.sessionKey))
-        self.csocket.send(self.sessionKey)
 
         stri = "Welcome to the server"
         send = stri.encode('ascii')
@@ -96,16 +69,11 @@ class ClientThread(threading.Thread):
                 break
 
             try:
-                ciphertext, nonce, mac = self.parse_json(data)
+                ciphertext, nonce = self.parse_json(data)
                 # Decode the json received
                 message = self.decData(ciphertext)
             except ValueError | KeyError as e:
                 print('Error in decryption')
-
-            # Validate mac
-            if self.verify_auth(message, mac) != 0:
-                print("Security error. Closing connection")
-                break
 
             # Print the received message
             print('Received from the client: ' +
