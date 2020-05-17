@@ -3,41 +3,51 @@ import socket
 import json
 from base64 import b64encode, b64decode
 from Crypto.Cipher import AES, ARC4
+from Crypto.Random import get_random_bytes
 from Crypto.Random.random import randrange
 from Crypto.Hash import HMAC, SHA256
 from Crypto.PublicKey import ECC
 from Crypto.Signature import DSS
+from Crypto.Util.Padding import pad, unpad
+import struct
 
 from asn1crypto.keys import DSAParams
 from os import system
 
-charset = 'utf-8'
+IV_SIZE = 16
+NONCE_SIZE = 8
+CHARSET = 'utf-8'
+PACKET_SIZE = 4096
+CIPHER = "AES-CTR-NoPadding"
+# Ciphers: AES-CTR-NoPadding, RC4, AES-CBC-NoPadding, AES-CBC-PKCS5Padding, AES-CFB8-NoPadding, AES-CFB8-PKCS5Padding, AES-CFB-NoPadding
 
 
 class Key:
     def __init__(self):
-        # code got in slack by student with name up201005324
-        system("openssl dsaparam -outform DER -in parameters2.pem -out parameters2.der")
-        with open("parameters2.der", "rb") as f:
+        # Code got in slack by student with up201005324
+        # system("openssl dsaparam -outform DER -in parameters2.pem -out parameters2.der")
+        with open("parameters.der", "rb") as f:
             certs = f.read()
+        f.close()
         params = DSAParams.load(certs)
         self.p = int(params['p'])
         self.q = int(params['q'])
         self.g = int(params['g'])
-        f.close()
 
 
 class Client:
-    def __init__(self):
-        self.nonce = b'1234'
+    def __init__(self, soc):
+        self.socket = soc
 
         key = Key()
         self.client_secret = randrange(0, key.q - 1)
         self.shared_prime = key.p
         self.shared_base = key.g
-        self.client_DHside = pow(self.shared_base, self.client_secret, self.shared_prime)
+        self.client_DHside = pow(
+            self.shared_base, self.client_secret, self.shared_prime)
 
-        # everything is set after establishing session key
+        # Everything is set after establishing session key
+        self.server_DHside = 0
         self.sessionKey = 0
         self.enc_key = 0
         self.auth_key = 0
@@ -48,63 +58,195 @@ class Client:
         self.ehmac = 0
         self.dhmac = 0
 
+        self.nonce_iv = 0
         self.nrseq = 0
 
+    def establish_session_key(self):
+        # print("client_DHside: " + str(self.client_DHside))
+        self.send_message(str(self.client_DHside).encode(CHARSET))
 
-def establish_session_key(s, client):
-    # print("client_DHside: " + str(client.client_DHside))
-    s.send(str(client.client_DHside).encode(charset))
+        self.generate_and_send_nonce_iv()
 
-    server_DHside_signature_clientnr = s.recv(4096)
-    # print("server_DHside: " + str(server_DHside))
-    server_DHside, encrypted_json = get_server_DHside_and_encrypted_json(server_DHside_signature_clientnr)
-    sessionKey = pow(server_DHside, client.client_secret, client.shared_prime)
-    client.sessionKey = str(sessionKey).encode(charset)
-    set_keys(client)
+        server_DHside_signature_clientnr = self.receive_message()
+        # print("server_DHside: " + str(server_DHside_signature_clientnr))
+        server_DHside, encrypted_json = get_server_DHside_and_encrypted_json(
+            server_DHside_signature_clientnr)
+        sessionKey = pow(server_DHside, self.client_secret, self.shared_prime)
+        self.sessionKey = str(sessionKey).encode(CHARSET)
 
-    signed_hash_json = dec_data(client, encrypted_json).decode(charset)
-    client.clientnr, signed_hash = get_clientnr_and_hash_from_json(signed_hash_json)
-    #print(signed_hash)
-    hashed_values, validity = verify_hash(client, signed_hash, server_DHside)
-    if validity == False:
-        return False
-    create_asymetric_key_files(client.clientnr)
+        self.set_keys()
 
-    signed_hash = sign_DHvalues(client, hashed_values)
-    message_to_send = enc_data(client, signed_hash)
-    message_to_send = b64encode(message_to_send)
-    s.send(message_to_send)
-    # print(client.sessionKey)
-    return True
+        signed_hash_json = self.dec_data(encrypted_json)
+        self.clientnr, signed_hash = get_clientnr_and_hash_from_json(
+            signed_hash_json)
+        # print(signed_hash)
+        hashed_values, validity = self.verify_hash(signed_hash, server_DHside)
+        if validity == False:
+            return False
+        create_asymetric_key_files(self.clientnr)
 
+        signed_hash = self.sign_DHvalues(hashed_values)
+        message_to_send = self.enc_data(signed_hash)
+        message_to_send = b64encode(message_to_send)
+        self.send_message(message_to_send)
+        # print(client.sessionKey)
+        return True
 
-def sign_DHvalues(client, hashed_values):
-    f = open(str(client.clientnr) + '_private_key.pem')
-    key = ECC.import_key(f.read())
+    def generate_and_send_nonce_iv(self):
+        if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4"):
+            self.nonce_iv = get_random_bytes(NONCE_SIZE)
+        elif(CIPHER == "AES-CBC-NoPadding" or CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB8-PKCS5Padding" or CIPHER == "AES-CFB-NoPadding"):
+            self.nonce_iv = get_random_bytes(IV_SIZE)
 
-    signer = DSS.new(key, 'fips-186-3')
-    signed_hash = signer.sign(hashed_values)
+        self.send_message(self.nonce_iv)
+        print("Sended nonce_iv " + str(self.nonce_iv) + " of length " + str(len(self.nonce_iv)))
 
-    return signed_hash
+    def set_keys(self):
+        self.enc_key = SHA256.new(data=self.sessionKey + b'1').digest()
+        self.auth_key = SHA256.new(data=self.sessionKey + b'2').digest()
 
+        if(CIPHER == "AES-CTR-NoPadding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CTR, nonce=self.nonce_iv)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CTR, nonce=self.nonce_iv)
 
-def verify_hash(client, signed_hash, server_DHside):
-    verify_values = json.dumps({'gy': str(server_DHside), 'gx': str(client.client_DHside)})
-    hash_to_verify = SHA256.new(verify_values.encode(charset))
+        elif(CIPHER == "RC4"):
+            self.encCipher = ARC4.new(self.enc_key, nonce=self.nonce_iv)
+            self.decCipher = ARC4.new(self.enc_key, nonce=self.nonce_iv)
 
-    #print('hashed values: ' + hash_to_verify.hexdigest())
-    #print('signed value: ' + str(signed_hash))
-    f = open('server_public_key.pem')
-    key = ECC.import_key(f.read())
+        elif(CIPHER == "AES-CBC-NoPadding" or CIPHER == "AES-CBC-PKCS5Padding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CBC, iv=self.nonce_iv)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CBC, iv=self.nonce_iv)
 
-    verifier = DSS.new(key, 'fips-186-3')
-    try:
-        verifier.verify(hash_to_verify, signed_hash)
-        #print("verified signature")
-        return hash_to_verify, True
-    except ValueError:
-        print("The message signature couldnt be validated")
-        return hash_to_verify, False
+        elif(CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=self.nonce_iv, segment_size=8)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=self.nonce_iv, segment_size=8)
+
+        # PyCryptoDome não permite segment_size = 1 para CFB-1
+        elif(CIPHER == "AES-CFB-NoPadding"):
+            self.encCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=self.nonce_iv, segment_size=8)
+            self.decCipher = AES.new(
+                self.enc_key, AES.MODE_CFB, iv=self.nonce_iv, segment_size=8)
+
+        self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
+        self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
+
+    def sign_DHvalues(self, hashed_values):
+        f = open(str(self.clientnr) + '_private_key.pem')
+        key = ECC.import_key(f.read())
+
+        signer = DSS.new(key, 'fips-186-3')
+        signed_hash = signer.sign(hashed_values)
+
+        return signed_hash
+
+    def verify_hash(self, signed_hash, server_DHside):
+        verify_values = json.dumps(
+            {'gy': str(server_DHside), 'gx': str(self.client_DHside)})
+        # verify_values = str(server_DHside) + str(self.client_DHside)
+        hash_to_verify = SHA256.new(verify_values.encode(CHARSET))
+
+        #print('hashed values: ' + hash_to_verify.hexdigest())
+        #print('signed value: ' + str(signed_hash))
+        f = open('server_public_key.pem')
+        key = ECC.import_key(f.read())
+
+        verifier = DSS.new(key, 'fips-186-3')
+        try:
+            verifier.verify(hash_to_verify, signed_hash)
+            print("Verified signature" + "\n")
+            return hash_to_verify, True
+        except ValueError:
+            print("The message signature couldn't be validated")
+            return hash_to_verify, False
+
+    def enc_data(self, message):
+        if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+            return self.encCipher.encrypt(message)
+        elif(CIPHER == "AES-CBC-NoPadding"):
+            return self.encCipher.encrypt(pad(message, 16))
+        elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            return self.encCipher.encrypt(pad(message, 16))
+
+    def dec_data(self, ciphertext):
+        if(CIPHER == "AES-CTR-NoPadding" or CIPHER == "RC4" or CIPHER == "AES-CFB8-NoPadding" or CIPHER == "AES-CFB-NoPadding"):
+            return self.decCipher.decrypt(ciphertext)
+        elif(CIPHER == "AES-CBC-NoPadding"):
+            return unpad(self.decCipher.decrypt(ciphertext), 16)
+        elif(CIPHER == "AES-CBC-PKCS5Padding" or CIPHER == "AES-CFB8-PKCS5Padding"):
+            return unpad(self.decCipher.decrypt(ciphertext), 16)
+
+    def make_auth(self, ciphertext):
+        # Add sequence number to ciphertext
+        ciphertext = ciphertext + bytes(self.nrseq)
+        self.ehmac.update(ciphertext)
+        return self.ehmac.digest()
+
+    def verify_auth(self, ciphertext, mac):
+        # Add sequence number to ciphertext
+        ciphertext = ciphertext + bytes(self.nrseq)
+        self.dhmac.update(ciphertext)
+        try:
+            # Need to transform from hexadecimal bytes to hexadecimal string
+            self.dhmac.hexverify(mac.hex())
+            print('MAC is good.')
+        except ValueError as e:
+            print('MAC with error.')
+            return False
+
+        return True
+
+    def encrypt_and_compose_json_message(self, message):
+        message = message.encode(CHARSET)
+        ciphertext = self.enc_data(message)
+        mac = self.make_auth(message)
+
+        # Create json file
+        return make_json(ciphertext, mac)
+
+    def decrypt_and_decompose_json_message(self, message):
+        try:
+            ciphertext, mac = parse_json(message)
+            # Decode the json received
+            message = self.dec_data(ciphertext)
+            # print(message)
+        except ValueError | KeyError as e:
+            print('Error in decryption')
+            raise e
+
+        # Validate mac
+        if self.verify_auth(message, mac) == False:
+            print("Security error. Closing connection")
+            raise ValueError
+
+        return message
+
+    def send_message(self, message):
+        # print("Send struct: " + '=I' + str(len(message)) + 's')
+        packet = struct.pack('=I' + str(len(message)) + 's',
+                             len(message), message)
+        self.socket.sendall(packet)
+
+    def receive_message(self):
+        unpacker = struct.Struct('=I')
+        data = self.socket.recv(unpacker.size)
+        if(data == b''):
+            print("Received empty message")
+            return b''
+        n_bytes = unpacker.unpack(data)[0]
+        print("Received n_bytes: " + str(n_bytes))
+
+        unpacker = struct.Struct('=' + str(n_bytes) + 's')
+        data = self.socket.recv(unpacker.size)
+        message = unpacker.unpack(data)[0]
+        print("Received message: " + str(message))
+        return message
 
 
 def get_clientnr_and_hash_from_json(signed_hash_json):
@@ -117,62 +259,21 @@ def get_server_DHside_and_encrypted_json(server_DHside_signature_clientnr):
     return int(rcv_json['gy']), b64decode(rcv_json['encrypted_signed'])
 
 
-def set_keys(client):
-    client.enc_key = SHA256.new(data=client.sessionKey + b'1').digest()
-    client.auth_key = SHA256.new(data=client.sessionKey + b'2').digest()
-
-    client.encCipher = AES.new(client.enc_key, AES.MODE_CTR, nonce=client.nonce)
-    client.decCipher = AES.new(client.enc_key, AES.MODE_CTR, nonce=client.nonce)
-    client.ehmac = HMAC.new(client.auth_key, digestmod=SHA256)
-    client.dhmac = HMAC.new(client.auth_key, digestmod=SHA256)
-
-
-def enc_data(client, message):
-    return client.encCipher.encrypt(message)
-
-
-def dec_data(client, ciphertext):
-    return client.decCipher.decrypt(ciphertext)
-
-def make_auth(client, ciphertext):
-    # add sequence number to ciphertext
-    ciphertext = ciphertext + bytes(client.nrseq)
-    client.ehmac.update(ciphertext)
-    return client.ehmac.digest()
-
-
-def verify_auth(client, ciphertext, mac):
-    # add sequence number to ciphertext
-    ciphertext = ciphertext + bytes(client.nrseq)
-    client.dhmac.update(ciphertext)
-    try:
-        # need to transform from hexadecimal bytes to hexadecimal string
-        client.dhmac.hexverify(mac.hex())
-        #print('MAC is good.')
-    except ValueError as e:
-        print('MAC with error.')
-        return 1
-
-    return 0
-
-
-def make_json(client, ciphertext_bytes, mac):
+def make_json(ciphertext_bytes, mac):
     # b64 encode becuz of weird characters
-    ciphertext = b64encode(ciphertext_bytes).decode(charset)
-    nonce = b64encode(client.nonce).decode(charset)
-    mac = b64encode(mac).decode(charset)
+    ciphertext = b64encode(ciphertext_bytes).decode(CHARSET)
+    mac = b64encode(mac).decode(CHARSET)
 
-    return json.dumps({'nonce': nonce, 'ciphertext': ciphertext, 'mac': mac})
+    return json.dumps({'ciphertext': ciphertext, 'mac': mac})
 
 
 def parse_json(data_rcv):
     rcv_json = json.loads(data_rcv)
 
     ciphertext = b64decode(rcv_json['ciphertext'])
-    nonce = b64decode(rcv_json['nonce'])
     mac = b64decode(rcv_json['mac'])
 
-    return ciphertext, nonce, mac
+    return ciphertext, mac
 
 
 def Main():
@@ -186,17 +287,17 @@ def Main():
     # Connect to server on local computer
     s.connect((host, port))
 
-    client = Client()
-    if establish_session_key(s, client) == False:
+    client = Client(s)
+    if client.establish_session_key() == False:
         print("There was an error estabilishing the key")
-        s.send("Couldnt establish shared key".encode(charset))
+        # s.sendall("Couldnt establish shared key".encode(CHARSET))
         return
 
     #print('Received the following session key: ' + str(client.sessionKey) + '\n')
-    message = s.recv(2048)
+    message = client.receive_message()
     print('Received the following greeting message: ' + str(message) + '\n')
-    #reset keys so values coincide again
-    set_keys(client)
+    # Reset keys so values coincide again
+    # client.set_keys()
     while True:
         try:
             message = input('Message to send: ')
@@ -210,34 +311,19 @@ def Main():
         elif message == 'quit' or message == 'exit':
             break
 
-        message = message.encode(charset)
-        ciphertext = enc_data(client, message)
+        message = client.encrypt_and_compose_json_message(message)
+        # print(message)
+        client.send_message(message.encode(CHARSET))
 
-        mac = make_auth(client, message)
-
-        # Create json file
-        result = make_json(client, ciphertext, mac)
-
-        # Message sent to server
-        s.send(result.encode(charset))
-
-        # Message received from server
-        data_rcv = s.recv(2048)
-        try:
-            ciphertext, client.nonce, mac = parse_json(data_rcv)
-            # Decode the json received
-            message = dec_data(client, ciphertext)
-            #print(message)
-        except ValueError | KeyError as e:
-            print('Error in decryption')
-        # Validate mac
-        if verify_auth(client, message, mac) != 0:
-            print("Security error. Closing connection")
+        message = client.receive_message()
+        if message == b'':
+            print('Server disconnected Exiting...')
             break
+        message = client.decrypt_and_decompose_json_message(message)
 
         # Print the received message
         print('Received from the server: ' +
-              str(message.decode(charset)) + '\n')
+              message.decode(CHARSET) + '\n')
         client.nrseq = client.nrseq + 1
 
     # Close the connection
