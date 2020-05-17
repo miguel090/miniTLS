@@ -2,11 +2,11 @@
 import socket
 import json
 from base64 import b64encode, b64decode
-from Crypto.Cipher import AES, ARC4
+from Crypto.Cipher import AES, ARC4, PKCS1_OAEP
 from Crypto.Random import get_random_bytes
 from Crypto.Random.random import randrange
 from Crypto.Hash import HMAC, SHA256
-from Crypto.PublicKey import ECC
+from Crypto.PublicKey import RSA
 from Crypto.Signature import DSS
 from Crypto.Util.Padding import pad, unpad
 import struct
@@ -25,7 +25,7 @@ CIPHER = "AES-CTR-NoPadding"
 class Key:
     def __init__(self):
         # Code got in slack by student with up201005324
-        # system("openssl dsaparam -outform DER -in parameters2.pem -out parameters2.der")
+        # system("openssl dsaparam -outform DER -in parameters.pem -out parameters.der")
         with open("parameters.der", "rb") as f:
             certs = f.read()
         f.close()
@@ -83,7 +83,6 @@ class Client:
         hashed_values, validity = self.verify_hash(signed_hash, server_DHside)
         if validity == False:
             return False
-        create_asymetric_key_files(self.clientnr)
 
         signed_hash = self.sign_DHvalues(hashed_values)
         message_to_send = self.enc_data(signed_hash)
@@ -138,31 +137,31 @@ class Client:
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
     def sign_DHvalues(self, hashed_values):
-        f = open(str(self.clientnr) + '_private_key.pem')
-        key = ECC.import_key(f.read())
+        f = open('test_client_key.pem')
+        key = RSA.import_key(f.read())
 
-        signer = DSS.new(key, 'fips-186-3')
-        signed_hash = signer.sign(hashed_values)
+        signed_hash = pow(hashed_values, key.d, key.n)
 
-        return signed_hash
+        return str(signed_hash).encode(CHARSET)
 
     def verify_hash(self, signed_hash, server_DHside):
         verify_values = json.dumps(
             {'gy': str(server_DHside), 'gx': str(self.client_DHside)})
         # verify_values = str(server_DHside) + str(self.client_DHside)
         hash_to_verify = SHA256.new(verify_values.encode(CHARSET))
+        hash_to_verify = int.from_bytes(hash_to_verify.digest(), byteorder='big')
 
         #print('hashed values: ' + hash_to_verify.hexdigest())
-        #print('signed value: ' + str(signed_hash))
-        f = open('server_public_key.pem')
-        key = ECC.import_key(f.read())
+        # print('signed value: ' + str(signed_hash))
+        f = open('test_server_cert.pem')
+        key = RSA.import_key(f.read())
 
-        verifier = DSS.new(key, 'fips-186-3')
-        try:
-            verifier.verify(hash_to_verify, signed_hash)
-            print("Verified signature" + "\n")
+        hashFromSignature = pow(int(signed_hash), key.e, key.n)
+
+        if(hash_to_verify == hashFromSignature):
+            print("Verified signature")
             return hash_to_verify, True
-        except ValueError:
+        else:
             print("The message signature couldn't be validated")
             return hash_to_verify, False
 
@@ -328,18 +327,6 @@ def Main():
 
     # Close the connection
     s.close()
-
-
-def create_asymetric_key_files(client_nr):
-    key = ECC.generate(curve='P-256')
-
-    f = open(str(client_nr) + '_private_key.pem', 'wt')
-    f.write(key.export_key(format='PEM'))
-    f.close()
-
-    f = open(str(client_nr) + '_public_key.pem', 'wt')
-    f.write(key.export_key(format='PEM'))
-    f.close()
 
 
 if __name__ == '__main__':

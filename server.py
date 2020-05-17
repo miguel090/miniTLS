@@ -4,11 +4,11 @@ import socket
 import threading
 import json
 from base64 import b64encode, b64decode
-from Crypto.Cipher import AES, ARC4
+from Crypto.Cipher import AES, ARC4, PKCS1_OAEP
 from Crypto.Util.Padding import pad, unpad
 from Crypto.Random.random import randrange
 from Crypto.Hash import HMAC, SHA256
-from Crypto.PublicKey import ECC
+from Crypto.PublicKey import RSA
 from Crypto.Signature import DSS
 import struct
 
@@ -26,7 +26,7 @@ CIPHER = "AES-CTR-NoPadding"
 class Key:
     def __init__(self):
         # Code got in slack by student with up201005324
-        # system("openssl dsaparam -outform DER -in parameters2.pem -out parameters.der")
+        # system("openssl dsaparam -outform DER -in parameters.pem -out parameters.der")
         with open("parameters.der", "rb") as f:
             certs = f.read()
         f.close()
@@ -75,7 +75,7 @@ class ClientThread(threading.Thread):
         # print('client_public_key: ' + str(client_DHside))
 
         self.nonce_iv = self.receive_message()
-        print("Received nonce_iv" + str(self.nonce_iv) + "\n")
+        # print("Received nonce_iv" + str(self.nonce_iv) + "\n")
 
         client_DHside = int(client_DHside.decode(CHARSET))
         sessionKey = pow(client_DHside, self.server_secret, self.shared_prime)
@@ -143,15 +143,15 @@ class ClientThread(threading.Thread):
             {'gy': str(self.server_DHside), 'gx': str(client_DHside)})
         
         hash_to_sign = SHA256.new(signing_items.encode(CHARSET))
+        hash_to_sign = int.from_bytes(hash_to_sign.digest(), byteorder='big')
 
-        f = open('server_private_key.pem')
-        key = ECC.import_key(f.read())
+        f = open('test_server_key.pem')
+        key = RSA.import_key(f.read())
 
-        signer = DSS.new(key, 'fips-186-3')
-        signature = signer.sign(hash_to_sign)
-        #print('hashed_values: ' + hash_to_sign.hexdigest())
-        #print('signed value: ' + str(signature))
-        signature = b64encode(signature).decode(CHARSET)
+        signature = pow(hash_to_sign, key.d, key.n)
+        # print('hashed_values: ' + hash_to_sign.hexdigest())
+        # print('signed value: ' + str(signature))
+        signature = b64encode(str(signature).encode(CHARSET)).decode(CHARSET)
         signed_json = json.dumps(
             {'signature': signature, 'clientnr': str(self.client_nr)})
 
@@ -162,14 +162,15 @@ class ClientThread(threading.Thread):
         return encrypted_signed_json, hash_to_sign
 
     def verify_signature(self, data_signed, data_to_test):
-        key = ECC.import_key(
-            open(str(self.client_nr) + '_public_key.pem').read())
-        verifier = DSS.new(key, 'fips-186-3')
-        try:
-            verifier.verify(data_to_test, data_signed)
+        f = open('test_client_cert.pem')
+        key = RSA.import_key(f.read())
+
+        hashFromSignature = pow(int(data_signed), key.e, key.n)
+
+        if(data_to_test == hashFromSignature):
             print("Verified signature")
             return True
-        except ValueError:
+        else:
             print("The message signature couldn't be validated")
             return False
 
@@ -250,6 +251,7 @@ class ClientThread(threading.Thread):
 
     def send_message(self, message):
         # print("Send struct: " + '=I' + str(len(message)) + 's')
+        # print("Send message: " + str(message))
         packet = struct.pack('=I' + str(len(message)) + 's',
                              len(message), message)
         self.csocket.sendall(packet)
@@ -304,21 +306,7 @@ class ClientThread(threading.Thread):
         print("Client at " + self.ip + " disconnected...")
 
 
-def create_asymetric_key_files():
-    key = ECC.generate(curve='P-256')
-
-    f = open('server_private_key.pem', 'wt')
-    f.write(key.export_key(format='PEM'))
-    f.close()
-
-    f = open('server_public_key.pem', 'wt')
-    f.write(key.export_key(format='PEM'))
-    f.close()
-
-
 def Main():
-    create_asymetric_key_files()
-
     host = "127.0.0.1"
     port = 9999
 
