@@ -1,2 +1,0 @@
-V	210517210811Z		00	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=FredericoLopes
-V	210517213023Z		01	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=MiguelSilva

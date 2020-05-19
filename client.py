@@ -13,6 +13,8 @@ import struct
 
 from asn1crypto.keys import DSAParams
 from os import system
+import os
+import subprocess
 
 IV_SIZE = 16
 NONCE_SIZE = 8
@@ -69,7 +71,7 @@ class Client:
 
         server_DHside_signature_clientnr = self.receive_message()
         # print("server_DHside: " + str(server_DHside_signature_clientnr))
-        server_DHside, encrypted_json = get_server_DHside_and_encrypted_json(
+        server_DHside, encrypted_json, certs = get_server_DHside_encrypted_json_and_certs(
             server_DHside_signature_clientnr)
         sessionKey = pow(server_DHside, self.client_secret, self.shared_prime)
         self.sessionKey = str(sessionKey).encode(CHARSET)
@@ -84,11 +86,20 @@ class Client:
         if validity == False:
             return False
 
+        if(self.checkCertificates(certs)):
+            print("The certificate chain could not be validated")
+            return False
+
         signed_hash = self.sign_DHvalues(hashed_values)
         message_to_send = self.enc_data(signed_hash)
-        message_to_send = b64encode(message_to_send)
-        self.send_message(message_to_send)
+        message_to_send = b64encode(message_to_send).decode(CHARSET)
+        data_to_send = json.dumps(
+            {'encrypted_signed': message_to_send, 'certs': self.importCertificates()})
+
+        # print("data to send" + data_to_send)
+        self.send_message(data_to_send.encode(CHARSET))
         # print(client.sessionKey)
+
         return True
 
     def generate_and_send_nonce_iv(self):
@@ -98,7 +109,8 @@ class Client:
             self.nonce_iv = get_random_bytes(IV_SIZE)
 
         self.send_message(self.nonce_iv)
-        print("Sended nonce_iv " + str(self.nonce_iv) + " of length " + str(len(self.nonce_iv)))
+        print("Sended nonce_iv " + str(self.nonce_iv) +
+              " of length " + str(len(self.nonce_iv)))
 
     def set_keys(self):
         self.enc_key = SHA256.new(data=self.sessionKey + b'1').digest()
@@ -136,9 +148,46 @@ class Client:
         self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
+    def importCertificates(self):
+        f = open('AC.pem')
+        zero = f.read()
+        f.close()
+
+        f = open('grupoFM.pem')
+        one = f.read()
+        f.close()
+
+        f = open('client.cer')
+        two = f.read()
+        f.close()
+
+        return json.dumps({"0": zero, "1": one, "2": two})
+
+    def checkCertificates(self, certs):
+        certs = json.loads(certs)
+        depth = len(certs)
+        command = ["java", "ValidateCertPath"]
+
+        for i in range(0, depth):
+            f = open(str(i) + '_client_tmp.cer', 'wt')
+            f.write(certs[str(i)])
+            f.close()
+            command.append(str(i) + '_client_tmp.cer')
+
+        ret = subprocess.run(command).returncode
+
+        for i in range(0, depth):
+            os.remove(str(i) + '_client_tmp.cer')
+
+        if(ret == 0):
+            return True
+        else:
+            return False
+
     def sign_DHvalues(self, hashed_values):
-        f = open('test_client_key.pem')
+        f = open('client.key')
         key = RSA.import_key(f.read())
+        f.close()
 
         signed_hash = pow(hashed_values, key.d, key.n)
 
@@ -149,12 +198,14 @@ class Client:
             {'gy': str(server_DHside), 'gx': str(self.client_DHside)})
         # verify_values = str(server_DHside) + str(self.client_DHside)
         hash_to_verify = SHA256.new(verify_values.encode(CHARSET))
-        hash_to_verify = int.from_bytes(hash_to_verify.digest(), byteorder='big')
+        hash_to_verify = int.from_bytes(
+            hash_to_verify.digest(), byteorder='big')
 
         #print('hashed values: ' + hash_to_verify.hexdigest())
         # print('signed value: ' + str(signed_hash))
-        f = open('test_server_cert.pem')
+        f = open('server.cer')
         key = RSA.import_key(f.read())
+        f.close()
 
         hashFromSignature = pow(int(signed_hash), key.e, key.n)
 
@@ -253,9 +304,9 @@ def get_clientnr_and_hash_from_json(signed_hash_json):
     return rcv_json['clientnr'], b64decode(rcv_json['signature'])
 
 
-def get_server_DHside_and_encrypted_json(server_DHside_signature_clientnr):
+def get_server_DHside_encrypted_json_and_certs(server_DHside_signature_clientnr):
     rcv_json = json.loads(server_DHside_signature_clientnr)
-    return int(rcv_json['gy']), b64decode(rcv_json['encrypted_signed'])
+    return int(rcv_json['gy']), b64decode(rcv_json['encrypted_signed']), rcv_json['certs']
 
 
 def make_json(ciphertext_bytes, mac):

@@ -14,6 +14,8 @@ import struct
 
 from asn1crypto.keys import DSAParams
 from os import system
+import os
+import subprocess
 
 IV_SIZE = 16
 NONCE_SIZE = 8
@@ -88,14 +90,23 @@ class ClientThread(threading.Thread):
             client_DHside)
 
         data_to_send = json.dumps(
-            {'gy': str(self.server_DHside), 'encrypted_signed': encrypted_signed_json})
+            {'gy': str(self.server_DHside), 'certs': self.importCertificates(), 'encrypted_signed': encrypted_signed_json})
 
         # print("data to send" + data_to_send)
         self.send_message(data_to_send.encode(CHARSET))
 
-        confirmation_data_encrypted = self.receive_message()
+        data = self.receive_message()
+
+        rcv_json = json.loads(data)
+        confirmation_data_encrypted = b64decode(rcv_json['encrypted_signed'])
+        certs = rcv_json['certs']
+
         confirmation_data = self.get_confirmation_data(
             confirmation_data_encrypted)
+
+        if(self.checkCertificates(certs)):
+            print("The certificate chain could not be validated")
+            return False
 
         # The signature contains the hashed values so it verifies if the values are correct
         return self.verify_signature(confirmation_data, hashed_values)
@@ -132,6 +143,41 @@ class ClientThread(threading.Thread):
         self.ehmac = HMAC.new(self.auth_key, digestmod=SHA256)
         self.dhmac = HMAC.new(self.auth_key, digestmod=SHA256)
 
+    def importCertificates(self):
+        f = open('AC.pem')
+        zero = f.read()
+        f.close()
+
+        f = open('grupoFM.pem')
+        one = f.read()
+        f.close()
+
+        f = open('server.cer')
+        two = f.read()
+        f.close()
+
+        return json.dumps({"0": zero, "1": one, "2": two})
+
+    def checkCertificates(self, certs):
+        depth = len(certs)
+        command = ["java", "ValidateCertPath"]
+
+        for i in range(0, depth):
+            f = open(str(i) + '_server_tmp.cer', 'wt')
+            f.write(certs[str(i)])
+            f.close()
+            command.append(str(i) + '_server_tmp.cer')
+
+        ret = subprocess.run(command).returncode
+
+        for i in range(0, depth):
+            os.remove(str(i) + '_server_tmp.cer')
+
+        if(ret == 0):
+            return True
+        else:
+            return False
+
     def get_confirmation_data(self, confirmation_data_encrypted):
         ciphertext = b64decode(confirmation_data_encrypted)
         # Returns in bytes format
@@ -141,12 +187,13 @@ class ClientThread(threading.Thread):
         # Make json with both values to send
         signing_items = json.dumps(
             {'gy': str(self.server_DHside), 'gx': str(client_DHside)})
-        
+
         hash_to_sign = SHA256.new(signing_items.encode(CHARSET))
         hash_to_sign = int.from_bytes(hash_to_sign.digest(), byteorder='big')
 
-        f = open('test_server_key.pem')
+        f = open('server.key')
         key = RSA.import_key(f.read())
+        f.close()
 
         signature = pow(hash_to_sign, key.d, key.n)
         # print('hashed_values: ' + hash_to_sign.hexdigest())
@@ -162,8 +209,9 @@ class ClientThread(threading.Thread):
         return encrypted_signed_json, hash_to_sign
 
     def verify_signature(self, data_signed, data_to_test):
-        f = open('test_client_cert.pem')
+        f = open('client.cer')
         key = RSA.import_key(f.read())
+        f.close()
 
         hashFromSignature = pow(int(data_signed), key.e, key.n)
 
