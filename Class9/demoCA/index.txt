@@ -1,2 +1,4 @@
 V	210517210811Z		00	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=FredericoLopes
 V	210517213023Z		01	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=MiguelSilva
+V	210519160345Z		02	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=FredericoLopes/emailAddress=up201604674@fc.up.pt
+V	210519160540Z		03	unknown	/C=PT/ST=Porto/L=Porto/O=Universidade do Porto/OU=MSI/CN=MiguelSilva/emailAddress=up201605989@fc.up.pt
