@@ -1,4 +1,11 @@
 # miniTLS
 Project for applied criptography
-#sites used
-https://www.insiderattack.net/2013/07/hacker-python-3-multi-threaded-tcp-echo.html
+
+Classes done: all
+
+Install dependencies:
+# sudo pip3 install -r requirements.txt
+
+To run using python3:
+# python3 server.py
+# python3 client.py

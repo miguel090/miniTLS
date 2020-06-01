@@ -10,6 +10,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Signature import DSS
 from Crypto.Util.Padding import pad, unpad
 import struct
+from OpenSSL import crypto
 
 from asn1crypto.keys import DSAParams
 from os import system
@@ -86,7 +87,7 @@ class Client:
         if validity == False:
             return False
 
-        if(self.checkCertificates(certs)):
+        if(not self.checkCertificates(certs)):
             print("The certificate chain could not be validated")
             return False
 
@@ -165,24 +166,36 @@ class Client:
 
     def checkCertificates(self, certs):
         certs = json.loads(certs)
-        depth = len(certs)
-        command = ["java", "ValidateCertPath"]
+        depth = len(certs.keys())
 
-        for i in range(0, depth):
-            f = open(str(i) + '_client_tmp.cer', 'wt')
-            f.write(certs[str(i)])
-            f.close()
-            command.append(str(i) + '_client_tmp.cer')
+        leaf = crypto.load_certificate(
+            crypto.FILETYPE_PEM, certs[str(depth-1)])
 
-        ret = subprocess.run(command).returncode
+        intermediates = []
+        for i in range(1, depth-1):
+            intermediates.append(crypto.load_certificate(
+                crypto.FILETYPE_PEM, certs[str(i)]))
 
-        for i in range(0, depth):
-            os.remove(str(i) + '_client_tmp.cer')
+        bad_store = crypto.X509Store()
+        # add the AC root
+        f = open('AC.pem')
+        acCert = f.read()
+        f.close()
 
-        if(ret == 0):
-            return True
-        else:
+        bad_store.add_cert(crypto.load_certificate(
+            crypto.FILETYPE_PEM, acCert))
+        for intermediate in intermediates:
+            bad_store.add_cert(intermediate)
+        bad_store_ctx = crypto.X509StoreContext(bad_store, leaf)
+
+        try:
+            bad_store_ctx.verify_certificate()
+            print("== CHAIN IS VALID ==")
+        except Exception as e:
+            print("== CHAIN FAILED VALIDATION ==")
             return False
+
+        return True
 
     def sign_DHvalues(self, hashed_values):
         f = open('client.key')
@@ -290,12 +303,13 @@ class Client:
             print("Received empty message")
             return b''
         n_bytes = unpacker.unpack(data)[0]
-        print("Received n_bytes: " + str(n_bytes))
+        # print("Received n_bytes: " + str(n_bytes))
 
         unpacker = struct.Struct('=' + str(n_bytes) + 's')
         data = self.socket.recv(unpacker.size)
         message = unpacker.unpack(data)[0]
-        print("Received message: " + str(message))
+        # print("Received message: " + str(message))
+        print("Received message")
         return message
 
 

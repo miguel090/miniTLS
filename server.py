@@ -11,6 +11,7 @@ from Crypto.Hash import HMAC, SHA256
 from Crypto.PublicKey import RSA
 from Crypto.Signature import DSS
 import struct
+from OpenSSL import crypto
 
 from asn1crypto.keys import DSAParams
 from os import system
@@ -98,13 +99,13 @@ class ClientThread(threading.Thread):
         data = self.receive_message()
 
         rcv_json = json.loads(data)
-        confirmation_data_encrypted = b64decode(rcv_json['encrypted_signed'])
+        confirmation_data_encrypted = rcv_json['encrypted_signed']
         certs = rcv_json['certs']
 
         confirmation_data = self.get_confirmation_data(
             confirmation_data_encrypted)
 
-        if(self.checkCertificates(certs)):
+        if(not self.checkCertificates(certs)):
             print("The certificate chain could not be validated")
             return False
 
@@ -159,24 +160,37 @@ class ClientThread(threading.Thread):
         return json.dumps({"0": zero, "1": one, "2": two})
 
     def checkCertificates(self, certs):
-        depth = len(certs)
-        command = ["java", "ValidateCertPath"]
+        certs = json.loads(certs)
+        depth = len(certs.keys())
 
-        for i in range(0, depth):
-            f = open(str(i) + '_server_tmp.cer', 'wt')
-            f.write(certs[str(i)])
-            f.close()
-            command.append(str(i) + '_server_tmp.cer')
+        leaf = crypto.load_certificate(
+            crypto.FILETYPE_PEM, certs[str(depth-1)])
 
-        ret = subprocess.run(command).returncode
+        intermediates = []
+        for i in range(1, depth-1):
+            intermediates.append(crypto.load_certificate(
+                crypto.FILETYPE_PEM, certs[str(i)]))
 
-        for i in range(0, depth):
-            os.remove(str(i) + '_server_tmp.cer')
+        bad_store = crypto.X509Store()
+        # add the AC root
+        f = open('AC.pem')
+        acCert = f.read()
+        f.close()
 
-        if(ret == 0):
-            return True
-        else:
+        bad_store.add_cert(crypto.load_certificate(
+            crypto.FILETYPE_PEM, acCert))
+        for intermediate in intermediates:
+            bad_store.add_cert(intermediate)
+        bad_store_ctx = crypto.X509StoreContext(bad_store, leaf)
+
+        try:
+            bad_store_ctx.verify_certificate()
+            print("== CHAIN IS VALID ==")
+        except Exception as e:
+            print("== CHAIN FAILED VALIDATION ==")
             return False
+
+        return True
 
     def get_confirmation_data(self, confirmation_data_encrypted):
         ciphertext = b64decode(confirmation_data_encrypted)
@@ -311,12 +325,13 @@ class ClientThread(threading.Thread):
             print("Received empty message")
             return b''
         n_bytes = unpacker.unpack(data)[0]
-        print("Received n_bytes: " + str(n_bytes))
+        # print("Received n_bytes: " + str(n_bytes))
 
         unpacker = struct.Struct('=' + str(n_bytes) + 's')
         data = self.csocket.recv(unpacker.size)
         message = unpacker.unpack(data)[0]
-        print("Received message: " + str(message))
+        # print("Received message: " + str(message))
+        print("Received message")
         return message
 
     def run(self):
