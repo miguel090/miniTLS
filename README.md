@@ -4,8 +4,12 @@ Project for applied criptography
 Classes done: all
 
 Install dependencies:
-# sudo pip3 install -r requirements.txt
+```bash
+$ sudo pip3 install -r requirements.txt
+```
 
 To run using python3:
-# python3 server.py
-# python3 client.py
+```bash
+$ python3 server.py
+$ python3 client.py
+```
