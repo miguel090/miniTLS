@@ -12,6 +12,7 @@ from Crypto.Util.Padding import pad, unpad
 import struct
 from OpenSSL import crypto
 
+import sys
 from asn1crypto.keys import DSAParams
 from os import system
 import os
@@ -340,11 +341,13 @@ def parse_json(data_rcv):
     return ciphertext, mac
 
 
-def Main():
+def Main(con_host, con_port):
     # Local host IP '127.0.0.1'
-    host = '127.0.0.1'
+    #host = '127.0.0.1'
+    host = con_host
     # Define the port on which you want to connect
-    port = 9999
+    #port = 9999
+    port = con_port
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -395,4 +398,5 @@ def Main():
 
 
 if __name__ == '__main__':
-    Main()
+    #print(sys.argv[1] + ' ' + sys.argv[2])
+    Main(sys.argv[1], int(sys.argv[2]))

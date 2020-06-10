@@ -14,6 +14,7 @@ import struct
 from OpenSSL import crypto
 
 from asn1crypto.keys import DSAParams
+import sys
 from os import system
 import os
 import subprocess
@@ -369,9 +370,11 @@ class ClientThread(threading.Thread):
         print("Client at " + self.ip + " disconnected...")
 
 
-def Main():
-    host = "127.0.0.1"
-    port = 9999
+def Main(con_host, con_port):
+    #host = "127.0.0.1"
+    host= con_host
+    #port = 9999
+    port = con_port
 
     tcpsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcpsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -391,4 +394,4 @@ def Main():
 
 
 if __name__ == '__main__':
-    Main()
+    Main(sys.argv[1], int(sys.argv[2]))
