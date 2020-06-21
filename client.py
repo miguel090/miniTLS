@@ -306,12 +306,16 @@ class Client:
         n_bytes = unpacker.unpack(data)[0]
         # print("Received n_bytes: " + str(n_bytes))
 
-        unpacker = struct.Struct('=' + str(n_bytes) + 's')
-        data = self.socket.recv(unpacker.size)
-        message = unpacker.unpack(data)[0]
+        buffer = b""
+        while len(buffer) < n_bytes:
+            buffer += self.socket.recv(n_bytes)
+
+        # unpacker = struct.Struct('=' + str(n_bytes) + 's')
+        # data = self.socket.recv(unpacker.size)
+        # message = unpacker.unpack(data)[0]
         # print("Received message: " + str(message))
         print("Received message")
-        return message
+        return buffer
 
 
 def get_clientnr_and_hash_from_json(signed_hash_json):

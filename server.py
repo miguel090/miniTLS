@@ -328,12 +328,17 @@ class ClientThread(threading.Thread):
         n_bytes = unpacker.unpack(data)[0]
         # print("Received n_bytes: " + str(n_bytes))
 
-        unpacker = struct.Struct('=' + str(n_bytes) + 's')
-        data = self.csocket.recv(unpacker.size)
-        message = unpacker.unpack(data)[0]
+
+        buffer = b""
+        while len(buffer) < n_bytes:
+            buffer += self.csocket.recv(n_bytes)
+
+        # unpacker = struct.Struct('=' + str(n_bytes) + 's')
+        # data = self.csocket.recv(unpacker.size)
+        # message = unpacker.unpack(data)[0]
         # print("Received message: " + str(message))
         print("Received message")
-        return message
+        return buffer
 
     def run(self):
         print("Connection from " + self.ip + ":" + str(self.port))
