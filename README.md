@@ -1,5 +1,5 @@
 # miniTLS
-Project for applied criptography
+Project for applied cryptography
 
 Classes done: all
 
